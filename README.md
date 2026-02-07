@@ -122,6 +122,59 @@ The installer auto-detects NVIDIA GPUs. For AI analytics plugins (object detecti
 - CUDA toolkit is available
 - `nvidia-smi` works
 
+---
+
+## ⚠️ Security Audit
+
+> **Ngày kiểm tra:** 2026-02-07
+
+### 🔴 Critical
+
+| # | Vấn đề | Chi tiết |
+|---|--------|---------|
+| 1 | **`curl \| sudo bash`** anti-pattern — code chạy trước khi review | Line 7 |
+| 2 | **Không checksum verification** — binary `.tar.gz` và web client tải về không verify SHA256/GPG | Lines 143-149, 534-541 |
+| 3 | **Service chạy root** + `NoNewPrivileges=false` | Line 196, 202 |
+| 4 | **Port 8080 mở firewall** — bypass nginx TLS, truy cập HTTP trực tiếp | Lines 568-569 |
+
+### 🟡 Medium
+
+| # | Vấn đề | Chi tiết |
+|---|--------|---------|
+| 5 | CORS reflect origin + credentials → CSRF/session theft | Lines 377-380 |
+| 6 | CORS wildcard `*` trên `/api/`, `/hls/`, `/streams/` | Lines 433, 472 |
+| 7 | `proxy_ssl_verify off` trên mọi upstream → MITM risk | Lines 430, 448, 467, 487 |
+| 8 | Command injection via `$DOMAIN` (unsanitized input) | Lines 237-240 |
+| 9 | Self-signed cert fallback không cảnh báo rõ | Lines 300-306 |
+| 10 | File permissions lỏng (server.json world-readable) | Lines 126-127 |
+| 11 | Missing CSP, Referrer-Policy, Permissions-Policy headers | Lines 350-352 |
+| 12 | nginx security headers bị override trong location blocks | nginx `add_header` behavior |
+| 13 | Không rate limiting trên API endpoints | Entire nginx config |
+
+### 🟢 Low / Bugs
+
+| # | Vấn đề | Chi tiết |
+|---|--------|---------|
+| 14 | `set -e` không có `trap` cleanup — fail mid-way để lại trạng thái hỏng | Line 22 |
+| 15 | `apt-get` hardcode — fail trên RHEL/CentOS | Lines 288-289 |
+| 16 | Không log rotation | Service config |
+| 17 | Không backup trước upgrade | Upgrade flow |
+| 18 | Không uninstall script | Architecture |
+| 19 | Crontab dedup fragile (`sort -u`) | Line 560 |
+| 20 | Streams directory world-accessible, không auth | nginx config |
+
+### Khắc phục ưu tiên
+
+1. **Ngay lập tức:** Thêm SHA256 checksum verification cho tất cả downloads
+2. **Ngay lập tức:** Tạo dedicated service user (`User=vms`), `NoNewPrivileges=true`
+3. **Sớm:** Đóng port 8080 trên firewall (chỉ expose qua nginx)
+4. **Sớm:** Fix CORS — explicit allowlist thay wildcard/reflection
+5. **Sớm:** Validate `$DOMAIN` input bằng regex
+6. **Sớm:** `chmod 600` cho `server.json`, `chmod 700` cho config/data dirs
+7. **Khi có thời gian:** Thêm log rotation, backup trước upgrade, uninstall script
+
+---
+
 ## Related Repositories
 
 - [vms-server](https://github.com/trinhtanphat/vms-server) — VMS Server source code
