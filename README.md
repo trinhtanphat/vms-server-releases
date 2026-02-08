@@ -175,8 +175,52 @@ The installer auto-detects NVIDIA GPUs. For AI analytics plugins (object detecti
 
 ---
 
+## CI/CD & Release Pipeline
+
+```
+vms-server (private repo)                vms-server-releases (public repo)
+┌─────────────────────┐                  ┌────────────────────────────┐
+│  Developer commits  │                  │  GitHub Releases           │
+│  git tag vX.Y.Z     │──── CI/CD ──────▶│  install.sh                │
+│  git push --tags    │   (auto build)   │  vms-server-linux-x64.tar.gz│
+└─────────────────────┘                  └─────────────┬──────────────┘
+                                                       │
+                                         ┌─────────────┘
+                                         ▼
+                               VMS Server (mỗi VPS)
+                               GET /api/update/check
+                               GET /api/update/list
+                                         │
+                                         ▼
+                               VMS Client Web
+                               Version picker UI
+                               Chọn version → cài đặt
+```
+
+### Quy trình release
+
+1. **Developer** commit code + update version trong `include/vms/core/version.h`
+2. **Tag** version: `git tag v0.5.0 && git push origin --tags`
+3. **CI/CD** (GitHub Actions) tự động:
+   - Build binary từ source (cmake + make)
+   - Package thành `vms-server-linux-x64.tar.gz`
+   - Tạo GitHub Release với tag version
+   - Upload binary + `install.sh`
+4. **VMS Server** trên mỗi VPS kiểm tra bản mới:
+   - Primary: License Server API (`license.vnso.vn/api/releases`)
+   - Fallback: GitHub Releases API (`api.github.com/repos/trinhtanphat/vms-server-releases/releases`)
+5. **VMS Client Web** hiển thị danh sách version để user chọn cập nhật
+
+### User nhận update như thế nào?
+
+- Mở VMS Client Web → Settings → Cập nhật hệ thống
+- Hệ thống hiển thị version hiện tại + danh sách tất cả version có sẵn
+- User chọn version muốn cài → nhấn "Nâng cấp" hoặc "Cài đặt"
+- Server tự động tải binary, verify checksum SHA256, khởi động lại
+
 ## Related Repositories
 
-- [vms-server](https://github.com/trinhtanphat/vms-server) — VMS Server source code
+- [vms-server](https://github.com/trinhtanphat/vms-server) — VMS Server source code (private)
 - [vms-client-web](https://github.com/trinhtanphat/vms-client-web) — VMS Web Client (React/TypeScript)
+- [vms-license-server](https://github.com/trinhtanphat/vms-license-server) — License & release management server
 - [nx_open](https://github.com/networkoptix/nx_open) — NX Witness / NX Meta SDK
