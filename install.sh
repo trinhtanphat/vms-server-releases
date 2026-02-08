@@ -245,15 +245,23 @@ if curl -fsSL "$PLUGIN_URL" -o "$TEMP_PLUGIN/analytics-plugins.tar.gz" 2>/dev/nu
         ok "AI models installed to $MODELS_DIR"
     fi
 
-    # Choose the right plugin binary (GPU vs CPU)
-    if [ "$HAS_GPU" = true ] && [ -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_gpu.so" ]; then
-        cp -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_gpu.so" \
-              "$PLUGIN_DIR/libobject_detection_analytics_plugin.so"
-        ok "Object detection plugin installed (GPU version)"
-    elif [ -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_cpu.so" ]; then
-        cp -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_cpu.so" \
-              "$PLUGIN_DIR/libobject_detection_analytics_plugin.so"
-        ok "Object detection plugin installed (CPU version)"
+    # Install all plugin binaries — choose GPU or CPU variant for each
+    SUFFIX="cpu"
+    if [ "$HAS_GPU" = true ]; then
+        SUFFIX="gpu"
+    fi
+
+    INSTALLED=0
+    for GPU_SO in "$TEMP_PLUGIN/plugins/"*_${SUFFIX}.so; do
+        [ -f "$GPU_SO" ] || continue
+        # Strip _cpu.so or _gpu.so suffix → final name
+        FINAL_NAME=$(basename "$GPU_SO" | sed "s/_${SUFFIX}\.so/.so/")
+        cp -f "$GPU_SO" "$PLUGIN_DIR/$FINAL_NAME"
+        INSTALLED=$((INSTALLED + 1))
+    done
+
+    if [ "$INSTALLED" -gt 0 ]; then
+        ok "$INSTALLED analytics plugin(s) installed (${SUFFIX^^} variant)"
     else
         # Fallback: copy any .so files directly
         find "$TEMP_PLUGIN" -name "*.so" -exec cp -f {} "$PLUGIN_DIR/" \;
