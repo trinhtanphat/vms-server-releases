@@ -225,14 +225,40 @@ step "2.7/8 Analytics Plugins & AI Models"
 MODELS_DIR="$PLUGIN_DIR/models"
 mkdir -p "$MODELS_DIR"
 
+# Detect GPU for choosing the right plugin binary
+HAS_GPU=false
+if command -v nvidia-smi &>/dev/null && nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | grep -qi nvidia; then
+    HAS_GPU=true
+fi
+
 # Download pre-built analytics plugin from release
 PLUGIN_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/analytics-plugins.tar.gz"
 info "Downloading analytics plugins..."
 
 TEMP_PLUGIN=$(mktemp -d)
 if curl -fsSL "$PLUGIN_URL" -o "$TEMP_PLUGIN/analytics-plugins.tar.gz" 2>/dev/null; then
-    tar -xzf "$TEMP_PLUGIN/analytics-plugins.tar.gz" -C "$PLUGIN_DIR/" 2>/dev/null
-    ok "Analytics plugins installed to $PLUGIN_DIR"
+    tar -xzf "$TEMP_PLUGIN/analytics-plugins.tar.gz" -C "$TEMP_PLUGIN/" 2>/dev/null
+
+    # Copy models
+    if [ -d "$TEMP_PLUGIN/models" ]; then
+        cp -f "$TEMP_PLUGIN/models/"* "$MODELS_DIR/" 2>/dev/null
+        ok "AI models installed to $MODELS_DIR"
+    fi
+
+    # Choose the right plugin binary (GPU vs CPU)
+    if [ "$HAS_GPU" = true ] && [ -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_gpu.so" ]; then
+        cp -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_gpu.so" \
+              "$PLUGIN_DIR/libobject_detection_analytics_plugin.so"
+        ok "Object detection plugin installed (GPU version)"
+    elif [ -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_cpu.so" ]; then
+        cp -f "$TEMP_PLUGIN/plugins/libobject_detection_analytics_plugin_cpu.so" \
+              "$PLUGIN_DIR/libobject_detection_analytics_plugin.so"
+        ok "Object detection plugin installed (CPU version)"
+    else
+        # Fallback: copy any .so files directly
+        find "$TEMP_PLUGIN" -name "*.so" -exec cp -f {} "$PLUGIN_DIR/" \;
+        ok "Analytics plugins installed to $PLUGIN_DIR"
+    fi
 else
     warn "Analytics plugin package not found in release."
     info "Downloading individual model files..."
@@ -263,6 +289,11 @@ if [ "$PLUGIN_COUNT" -gt 0 ]; then
     find "$PLUGIN_DIR" -name "*.so" -exec basename {} \; | while read f; do
         echo -e "    ${CYAN}→${NC} $f"
     done
+    if [ "$HAS_GPU" = true ]; then
+        info "GPU detected — using GPU-accelerated plugin"
+    else
+        info "No GPU detected — using CPU plugin"
+    fi
 fi
 
 # ============================================================
