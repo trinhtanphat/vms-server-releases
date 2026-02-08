@@ -218,6 +218,111 @@ rm -rf "$TEMP_DIR"
 ok "VMS Server $LATEST_VERSION installed to $INSTALL_DIR"
 
 # ============================================================
+# Install Analytics Plugins + AI Models
+# ============================================================
+step "2.7/8 Analytics Plugins & AI Models"
+
+MODELS_DIR="$PLUGIN_DIR/models"
+mkdir -p "$MODELS_DIR"
+
+# Download pre-built analytics plugin from release
+PLUGIN_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/analytics-plugins.tar.gz"
+info "Downloading analytics plugins..."
+
+TEMP_PLUGIN=$(mktemp -d)
+if curl -fsSL "$PLUGIN_URL" -o "$TEMP_PLUGIN/analytics-plugins.tar.gz" 2>/dev/null; then
+    tar -xzf "$TEMP_PLUGIN/analytics-plugins.tar.gz" -C "$PLUGIN_DIR/" 2>/dev/null
+    ok "Analytics plugins installed to $PLUGIN_DIR"
+else
+    warn "Analytics plugin package not found in release."
+    info "Downloading individual model files..."
+
+    # Download MobileNet SSD model (for object detection — required for most analytics features)
+    MOBILENET_PROTO="https://raw.githubusercontent.com/chuanqi305/MobileNet-SSD/master/deploy.prototxt"
+    MOBILENET_MODEL="https://github.com/chuanqi305/MobileNet-SSD/raw/master/mobilenet_iter_73000.caffemodel"
+
+    if [ ! -f "$MODELS_DIR/MobileNetSSD_deploy.prototxt" ]; then
+        curl -fsSL "$MOBILENET_PROTO" -o "$MODELS_DIR/MobileNetSSD_deploy.prototxt" 2>/dev/null && \
+            ok "MobileNet SSD prototxt downloaded" || \
+            warn "Failed to download MobileNet SSD prototxt"
+    fi
+
+    if [ ! -f "$MODELS_DIR/MobileNetSSD_deploy.caffemodel" ]; then
+        info "Downloading MobileNet SSD model (23 MB)..."
+        curl -fsSL -L "$MOBILENET_MODEL" -o "$MODELS_DIR/MobileNetSSD_deploy.caffemodel" 2>/dev/null && \
+            ok "MobileNet SSD model downloaded" || \
+            warn "Failed to download MobileNet SSD model"
+    fi
+fi
+rm -rf "$TEMP_PLUGIN"
+
+# List installed plugins
+PLUGIN_COUNT=$(find "$PLUGIN_DIR" -name "*.so" | wc -l)
+if [ "$PLUGIN_COUNT" -gt 0 ]; then
+    ok "$PLUGIN_COUNT analytics plugin(s) installed:"
+    find "$PLUGIN_DIR" -name "*.so" -exec basename {} \; | while read f; do
+        echo -e "    ${CYAN}→${NC} $f"
+    done
+fi
+
+# ============================================================
+# GPU + CUDA Setup (if NVIDIA GPU detected)
+# ============================================================
+if [ -n "$GPU_INFO" ] || [ -d /proc/driver/nvidia ]; then
+    step "2.8/8 GPU / CUDA Setup"
+
+    # Check if CUDA toolkit is installed
+    if ! command -v nvcc &>/dev/null && [ ! -f /usr/local/cuda/bin/nvcc ]; then
+        info "NVIDIA GPU detected but CUDA toolkit not installed."
+        info "Installing CUDA toolkit for GPU-accelerated AI analytics..."
+
+        # Add NVIDIA repo
+        if [ ! -f /usr/share/keyrings/cuda-archive-keyring.gpg ] && [ ! -f /etc/apt/sources.list.d/cuda-ubuntu2204-x86_64.list ]; then
+            wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.1-1_all.deb -O /tmp/cuda-keyring.deb 2>/dev/null
+            dpkg -i /tmp/cuda-keyring.deb > /dev/null 2>&1 || true
+            apt-get update -qq 2>/dev/null
+        fi
+
+        # Install CUDA toolkit (minimal)
+        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            cuda-toolkit-12-6 libcudnn9-cuda-12 libcudnn9-dev-cuda-12 > /dev/null 2>&1 && \
+            ok "CUDA 12.6 + cuDNN installed" || \
+            warn "CUDA installation failed. GPU analytics will use CPU fallback."
+    else
+        ok "CUDA toolkit already installed"
+    fi
+
+    # Install OpenCV with CUDA (for GPU-accelerated AI inference)
+    # Check if OpenCV has CUDA DNN support
+    HAS_CUDA_OPENCV=false
+    if pkg-config --exists opencv4 2>/dev/null; then
+        # Check if the installed OpenCV has CUDA
+        if ldconfig -p | grep -q libopencv_dnn_cuda 2>/dev/null; then
+            HAS_CUDA_OPENCV=true
+            ok "OpenCV with CUDA DNN already installed"
+        fi
+    fi
+
+    if [ "$HAS_CUDA_OPENCV" = false ] && command -v nvcc &>/dev/null; then
+        info "OpenCV without CUDA. GPU AI will use runtime CUDA detection."
+        info "For optimal GPU performance, build OpenCV with CUDA support:"
+        echo -e "    ${CYAN}See: https://docs.opencv.org/4.x/d6/d15/tutorial_building_tegra_cuda.html${NC}"
+    fi
+else
+    info "No NVIDIA GPU detected — analytics will use CPU inference"
+fi
+
+# Install OpenCV runtime (if not already present)
+if ! ldconfig -p | grep -q libopencv_dnn 2>/dev/null; then
+    info "Installing OpenCV runtime libraries..."
+    apt-get install -y -qq libopencv-dev > /dev/null 2>&1 && \
+        ok "OpenCV installed" || \
+        warn "OpenCV installation failed. Some analytics plugins may not work."
+else
+    ok "OpenCV runtime already available"
+fi
+
+# ============================================================
 # Create Systemd Service
 # ============================================================
 step "3/8 Systemd Service"
