@@ -383,11 +383,17 @@ WorkingDirectory=${INSTALL_DIR}
 StandardOutput=append:${LOG_DIR}/vms-server.log
 StandardError=append:${LOG_DIR}/vms-server.log
 
-# Hardening
+# Security Hardening
 ProtectSystem=strict
-ReadWritePaths=${DATA_DIR} ${LOG_DIR} ${CONFIG_DIR} ${PLUGIN_DIR}
+ReadWritePaths=${DATA_DIR} ${LOG_DIR} ${CONFIG_DIR} ${PLUGIN_DIR} /var/www/html/streams /tmp
 ProtectHome=true
-NoNewPrivileges=false
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
 
 [Install]
 WantedBy=multi-user.target
@@ -748,14 +754,16 @@ if command -v ufw &>/dev/null; then
     ufw allow 22/tcp   > /dev/null 2>&1 || true
     ufw allow 80/tcp   > /dev/null 2>&1 || true
     ufw allow 443/tcp  > /dev/null 2>&1 || true
-    ufw allow 8080/tcp > /dev/null 2>&1 || true
-    ok "Firewall rules configured (22, 80, 443, 8080)"
+    # Port 8080 is NOT opened — VMS server should be accessed via nginx (443) only
+    # ufw allow 8080/tcp > /dev/null 2>&1 || true
+    ok "Firewall rules configured (22, 80, 443) — port 8080 kept internal"
 elif command -v firewall-cmd &>/dev/null; then
     firewall-cmd --permanent --add-service=http  > /dev/null 2>&1 || true
     firewall-cmd --permanent --add-service=https > /dev/null 2>&1 || true
-    firewall-cmd --permanent --add-port=8080/tcp > /dev/null 2>&1 || true
+    # Port 8080 is NOT opened — VMS server should be accessed via nginx (443) only
+    # firewall-cmd --permanent --add-port=8080/tcp > /dev/null 2>&1 || true
     firewall-cmd --reload > /dev/null 2>&1 || true
-    ok "Firewall rules configured"
+    ok "Firewall rules configured — port 8080 kept internal"
 else
     info "No firewall manager detected — skipping"
 fi
