@@ -68,12 +68,34 @@ EMAIL=admin@example.com DOMAIN=myserver.example.com curl -fsSL .../install.sh | 
 
 ### After Installation
 
-Connect from any VMS Client:
+**First-Time Setup (Required):**
+
+After installation, you must create an admin account before you can use the server:
+
+```bash
+# Check if setup is required
+curl -sk https://localhost:8443/rest/v2/system/setup
+
+# Create admin account
+curl -sk -X POST https://localhost:8443/rest/v2/system/setup \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"your-secure-password"}'
+```
+
+Or open `https://your-domain/` in a browser — the VMS Web Client will detect that setup is required and guide you through admin account creation.
+
+**Connect from any VMS Client:**
 1. Open any VMS Client Web app (e.g., `https://vmsclient.vnso.vn`)
 2. Add Server → enter your domain, Port 443, Protocol HTTPS
-3. Login with your credentials
+3. Login with the admin credentials you created during setup
 
-Or open `https://your-domain/` directly if web client was deployed.
+**VMS Ports:**
+| Port | Protocol | Description |
+|------|----------|-------------|
+| 443 | HTTPS | Main access (via nginx reverse proxy) |
+| 8080 | HTTP | VMS Server direct (internal only) |
+| 8443 | HTTPS | VMS Server direct SSL (internal only) |
+| 8554 | RTSP | RTSP streaming |
 
 ## Manual Download
 
