@@ -141,6 +141,23 @@ else
 fi
 
 # ============================================================
+# Install Runtime Dependencies (FFmpeg)
+# ============================================================
+step "2.5/8 Installing Runtime Dependencies"
+
+info "Installing FFmpeg runtime libraries..."
+apt-get update -qq 2>/dev/null
+apt-get install -y -qq libavformat58 libavcodec58 libavutil56 libswscale5 libswresample3 > /dev/null 2>&1 || {
+    # Ubuntu 24.04+ uses different package versions
+    apt-get install -y -qq libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev > /dev/null 2>&1 || {
+        warn "Could not install FFmpeg packages automatically."
+        warn "Please install FFmpeg runtime libraries manually: apt-get install ffmpeg"
+        apt-get install -y -qq ffmpeg > /dev/null 2>&1 || true
+    }
+}
+ok "FFmpeg runtime libraries installed"
+
+# ============================================================
 # Download & Install VMS Server Binary
 # ============================================================
 DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${LATEST_VERSION}/vms-server-linux-${ARCH_LABEL}.tar.gz"
@@ -191,11 +208,9 @@ fi
 # Create symlink
 ln -sf "$INSTALL_DIR/vms-server" /usr/local/bin/vms-server
 
-# Set LD_LIBRARY_PATH for libs
-if [ -d "$INSTALL_DIR/lib" ]; then
-    echo "$INSTALL_DIR/lib" > /etc/ld.so.conf.d/vms-server.conf
-    ldconfig 2>/dev/null || true
-fi
+# Set LD_LIBRARY_PATH for shared libs
+echo -e "$INSTALL_DIR\n$INSTALL_DIR/lib" > /etc/ld.so.conf.d/vms-server.conf
+ldconfig 2>/dev/null || true
 
 # Cleanup
 rm -rf "$TEMP_DIR"
