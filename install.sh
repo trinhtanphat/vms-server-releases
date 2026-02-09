@@ -205,6 +205,20 @@ if [ -d "$INSTALL_DIR/plugins" ]; then
     cp -r "$INSTALL_DIR/plugins/"* "$PLUGIN_DIR/" 2>/dev/null || true
 fi
 
+# Copy models from main package (includes YOLOv8, MobileNet SSD, face models)
+if [ -d "$INSTALL_DIR/models" ]; then
+    mkdir -p "$PLUGIN_DIR/models"
+    cp -f "$INSTALL_DIR/models/"* "$PLUGIN_DIR/models/" 2>/dev/null || true
+    ok "AI models installed from main package"
+fi
+
+# Copy dashboard web UI
+if [ -d "$INSTALL_DIR/www" ]; then
+    mkdir -p /var/www/html
+    cp -r "$INSTALL_DIR/www/"* /var/www/html/ 2>/dev/null || true
+    ok "Dashboard web UI installed to /var/www/html/"
+fi
+
 # Create symlink
 ln -sf "$INSTALL_DIR/vms-server" /usr/local/bin/vms-server
 
@@ -239,22 +253,26 @@ TEMP_PLUGIN=$(mktemp -d)
 if curl -fsSL "$PLUGIN_URL" -o "$TEMP_PLUGIN/analytics-plugins.tar.gz" 2>/dev/null; then
     tar -xzf "$TEMP_PLUGIN/analytics-plugins.tar.gz" -C "$TEMP_PLUGIN/" 2>/dev/null
 
+    # Find the extracted directory (could be analytics-plugins/ or flat)
+    AP_DIR="$TEMP_PLUGIN"
+    [ -d "$TEMP_PLUGIN/analytics-plugins" ] && AP_DIR="$TEMP_PLUGIN/analytics-plugins"
+
     # Copy models
-    if [ -d "$TEMP_PLUGIN/models" ]; then
-        cp -f "$TEMP_PLUGIN/models/"* "$MODELS_DIR/" 2>/dev/null
-        ok "AI models installed to $MODELS_DIR"
+    if [ -d "$AP_DIR/models" ]; then
+        cp -f "$AP_DIR/models/"* "$MODELS_DIR/" 2>/dev/null
+        ok "AI models installed to $MODELS_DIR ($(ls "$AP_DIR/models/" | wc -l) files)"
     fi
 
-    # Install all plugin binaries — choose GPU or CPU variant for each
+    # Install plugin binaries
+    # First try GPU/CPU variants (legacy format), then unified .so files
     SUFFIX="cpu"
     if [ "$HAS_GPU" = true ]; then
         SUFFIX="gpu"
     fi
 
     INSTALLED=0
-    for GPU_SO in "$TEMP_PLUGIN/plugins/"*_${SUFFIX}.so; do
+    for GPU_SO in "$AP_DIR/plugins/"*_${SUFFIX}.so; do
         [ -f "$GPU_SO" ] || continue
-        # Strip _cpu.so or _gpu.so suffix → final name
         FINAL_NAME=$(basename "$GPU_SO" | sed "s/_${SUFFIX}\.so/.so/")
         cp -f "$GPU_SO" "$PLUGIN_DIR/$FINAL_NAME"
         INSTALLED=$((INSTALLED + 1))
@@ -263,9 +281,14 @@ if curl -fsSL "$PLUGIN_URL" -o "$TEMP_PLUGIN/analytics-plugins.tar.gz" 2>/dev/nu
     if [ "$INSTALLED" -gt 0 ]; then
         ok "$INSTALLED analytics plugin(s) installed (${SUFFIX^^} variant)"
     else
-        # Fallback: copy any .so files directly
-        find "$TEMP_PLUGIN" -name "*.so" -exec cp -f {} "$PLUGIN_DIR/" \;
-        ok "Analytics plugins installed to $PLUGIN_DIR"
+        # Unified plugins (no cpu/gpu suffix) — copy all .so directly
+        INSTALLED=$(find "$AP_DIR/plugins" -maxdepth 1 -name "*.so" 2>/dev/null | wc -l)
+        find "$AP_DIR/plugins" -maxdepth 1 -name "*.so" -exec cp -f {} "$PLUGIN_DIR/" \;
+        if [ "$INSTALLED" -gt 0 ]; then
+            ok "$INSTALLED analytics plugin(s) installed (unified, auto-detect GPU at runtime)"
+        else
+            warn "No analytics plugins found in package"
+        fi
     fi
 else
     warn "Analytics plugin package not found in release."
