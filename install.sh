@@ -461,6 +461,8 @@ ExecStartPre=/bin/mkdir -p ${DATA_DIR} ${LOG_DIR} ${CONFIG_DIR} /var/www/html/st
 ExecStart=${INSTALL_DIR}/vms-server
 Restart=always
 RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
 User=root
 Environment=LD_LIBRARY_PATH=${INSTALL_DIR}/lib:${INSTALL_DIR}
 WorkingDirectory=${INSTALL_DIR}
@@ -476,7 +478,6 @@ PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictNamespaces=true
 RestrictRealtime=true
 
 [Install]
