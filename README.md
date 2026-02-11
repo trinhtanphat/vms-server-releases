@@ -1,12 +1,19 @@
 # VMS Server Releases
 
-Pre-built binaries, installer script, and analytics plugins for VMS Server.
+Pre-built binaries, installer scripts, and analytics plugins for VMS Server.
+
+## Supported Platforms
+
+| Platform | Architecture | Installer | Package |
+|----------|-------------|-----------|---------|
+| Linux (Ubuntu 20.04+, Debian 11+) | x64 | `install.sh` | `.tar.gz` |
+| Windows (10/11, Server 2019+) | x64 | `install.ps1` | `.zip` |
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                   Any VPS / Server                  │
+│               Any VPS / Server / PC                 │
 │  ┌──────────┐    ┌─────────────┐    ┌───────────┐  │
 │  │  Nginx   │───▶│ VMS Server  │    │NX Witness │  │
 │  │ :443 SSL │    │   :8080     │    │  :7001    │  │
@@ -22,24 +29,39 @@ Pre-built binaries, installer script, and analytics plugins for VMS Server.
 └──────────────────┘
 ```
 
-Each VPS is **self-contained**: nginx + SSL + VMS Server + optional NX Witness + Web Client.
+Each server is **self-contained**: VMS Server + optional nginx/SSL + Web Client.
 
 ## Quick Install
+
+### Linux
 
 ```bash
 curl -fsSL https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.sh | sudo bash
 ```
 
+### Windows (PowerShell as Administrator)
+
+```powershell
+irm https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.ps1 | iex
+```
+
+Or download and run:
+
+```powershell
+Invoke-WebRequest -Uri https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.ps1 -OutFile install.ps1
+.\install.ps1
+```
+
 This will:
 1. Download and install VMS Server binary
 2. Install analytics plugins (GPU/CPU auto-select)
-3. Create systemd service (`vms-server`) with security hardening
-4. Install nginx with SSL (Let's Encrypt + self-signed fallback)
-5. Deploy VMS Web Client
-6. Configure firewall (440, 443 only; 8080 internal)
+3. Create systemd service (`vms-server`) / Windows Service (`VMSServer`)
+4. (Linux) Install nginx with SSL (Let's Encrypt + self-signed fallback)
+5. (Linux) Deploy VMS Web Client
+6. Configure firewall
 7. Auto-detect NVIDIA GPU for AI plugins
 
-### Install Options
+### Linux Install Options
 
 | Variable | Description |
 |----------|-------------|
@@ -49,13 +71,31 @@ This will:
 | `SKIP_WEB_CLIENT=1` | Skip web client deployment |
 | `EMAIL=admin@example.com` | Let's Encrypt email |
 
+### Windows Install Options
+
+| Parameter | Description |
+|-----------|-------------|
+| `-Version "v0.7.0"` | Install specific version |
+| `-InstallDir "D:\VMS"` | Custom install directory |
+| `-SkipService` | Skip Windows Service creation |
+| `-SkipFirewall` | Skip firewall rule creation |
+
 ### After Installation
 
 **Create admin account (required):**
+
+Linux:
 ```bash
 curl -sk -X POST https://localhost:8443/rest/v2/system/setup \
   -H 'Content-Type: application/json' \
   -d '{"username":"admin","password":"your-secure-password"}'
+```
+
+Windows (PowerShell):
+```powershell
+Invoke-RestMethod -Method POST -Uri "https://localhost:8443/rest/v2/system/setup" `
+  -ContentType "application/json" -SkipCertificateCheck `
+  -Body '{"username":"admin","password":"your-secure-password"}'
 ```
 
 Or open `https://your-domain/` — the web client guides through admin setup.
@@ -71,6 +111,7 @@ Or open `https://your-domain/` — the web client guides through admin setup.
 
 ## What Gets Installed
 
+### Linux
 ```
 /opt/vms-server/              # Server binary & libs
 /etc/vms-server/              # Configuration (server.json)
@@ -80,8 +121,18 @@ Or open `https://your-domain/` — the web client guides through admin setup.
 /var/www/html/vms-client/     # Web client (if deployed)
 ```
 
+### Windows
+```
+%ProgramFiles%\VMS-Server\          # Server binary (vms-server.exe)
+%ProgramData%\VMS-Server\           # Configuration (server.json)
+%ProgramData%\VMS-Server\data\      # Data (recordings, plugins DB)
+%ProgramData%\VMS-Server\logs\      # Logs
+%ProgramData%\VMS-Server\plugins\   # Analytics plugins (.dll)
+```
+
 ## Service Management
 
+### Linux
 ```bash
 sudo systemctl status vms-server     # Check status
 sudo systemctl restart vms-server    # Restart
@@ -89,10 +140,24 @@ sudo systemctl stop vms-server       # Stop
 sudo journalctl -u vms-server -f     # View logs
 ```
 
+### Windows (PowerShell as Admin)
+```powershell
+Get-Service VMSServer                # Check status
+Restart-Service VMSServer            # Restart
+Stop-Service VMSServer               # Stop
+Get-EventLog -LogName Application -Source VMSServer -Newest 20  # Logs
+```
+
 ## Upgrade
 
+### Linux
 ```bash
 curl -fsSL https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.sh | sudo bash
+```
+
+### Windows
+```powershell
+irm https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.ps1 | iex
 ```
 
 Detects existing installations and upgrades in place.
@@ -110,8 +175,11 @@ For AI analytics plugins, ensure:
 vms-server (private)              vms-server-releases (public)
 ┌─────────────────┐              ┌────────────────────────────┐
 │ git tag vX.Y.Z  │── CI/CD ──▶ │ GitHub Releases            │
-│ git push --tags │  (auto)     │ install.sh + .tar.gz       │
-└─────────────────┘              └────────────┬───────────────┘
+│ git push --tags │  (auto)     │ ├── install.sh (Linux)     │
+└─────────────────┘              │ ├── install.ps1 (Windows)  │
+                                 │ ├── vms-server-linux-x64   │
+                                 │ └── vms-server-windows-x64 │
+                                 └────────────┬───────────────┘
                                               │
                                     VMS Server → /api/update/check
                                     VMS Client Web → Version picker

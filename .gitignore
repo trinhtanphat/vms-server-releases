@@ -1,3 +1,5 @@
 analytics-plugins/
 vms-server-linux-x64/
+vms-server-windows-x64/
 *.tar.gz
+*.zip
