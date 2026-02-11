@@ -377,11 +377,71 @@ fi
 # Install OpenCV runtime (if not already present)
 if ! ldconfig -p | grep -q libopencv_dnn 2>/dev/null; then
     info "Installing OpenCV runtime libraries..."
-    apt-get install -y -qq libopencv-dev > /dev/null 2>&1 && \
-        ok "OpenCV installed" || \
-        warn "OpenCV installation failed. Some analytics plugins may not work."
+    # Try multiple package names — differs between Ubuntu versions
+    if apt-get install -y -qq libopencv-dev > /dev/null 2>&1; then
+        ok "OpenCV installed"
+    elif apt-get install -y -qq python3-opencv libopencv-core-dev libopencv-dnn-dev > /dev/null 2>&1; then
+        ok "OpenCV installed (minimal)"
+    elif apt-get install -y -qq libopencv-core4.5d libopencv-dnn4.5d libopencv-imgcodecs4.5d libopencv-imgproc4.5d > /dev/null 2>&1; then
+        ok "OpenCV runtime libs installed"
+    else
+        warn "OpenCV installation failed. Trying to install from source packages..."
+        apt-get install -y -qq libopencv-dev 2>&1 | tail -5 || true
+        warn "Some analytics plugins may not work without OpenCV."
+        warn "Manual fix: apt-get update && apt-get install -y libopencv-dev"
+    fi
 else
     ok "OpenCV runtime already available"
+fi
+
+# ============================================================
+# Pre-create Required Directories
+# ============================================================
+# These must exist BEFORE systemd starts, because the service uses
+# ProtectSystem=strict + ReadWritePaths — systemd's mount namespacing
+# fails if any ReadWritePaths directory doesn't exist.
+mkdir -p /var/www/html/streams
+mkdir -p "$DATA_DIR" "$LOG_DIR" "$CONFIG_DIR" "$PLUGIN_DIR" /tmp
+
+# ============================================================
+# Check Port Conflicts
+# ============================================================
+for CHECK_PORT in 8080 8443; do
+    PORT_PID=$(ss -tlnp "sport = :${CHECK_PORT}" 2>/dev/null | grep -v '^State' | head -1)
+    if [ -n "$PORT_PID" ]; then
+        PORT_PROC=$(echo "$PORT_PID" | grep -oP 'users:\(\("\K[^"]+' || echo "unknown")
+        warn "Port $CHECK_PORT is already in use by: $PORT_PROC"
+        warn "VMS Server needs ports 8080 and 8443. Please free them first:"
+        warn "  ss -tlnp sport = :$CHECK_PORT"
+        if echo "$PORT_PROC" | grep -qi docker; then
+            warn "  → Docker container detected. Run: docker ps | grep $CHECK_PORT"
+            warn "  → Then: docker stop <container_name>"
+        fi
+        err "Cannot start VMS Server — port $CHECK_PORT conflict. Fix and re-run installer."
+        exit 1
+    fi
+done
+
+# ============================================================
+# Verify Shared Libraries
+# ============================================================
+info "Checking shared library dependencies..."
+MISSING_LIBS=$(ldd "$INSTALL_DIR/vms-server" 2>/dev/null | grep 'not found' || true)
+if [ -n "$MISSING_LIBS" ]; then
+    warn "Missing shared libraries detected:"
+    echo "$MISSING_LIBS" | while read -r line; do echo "    $line"; done
+    info "Attempting to install missing dependencies..."
+    apt-get install -y -qq libssl-dev libsqlite3-dev libcurl4-openssl-dev > /dev/null 2>&1 || true
+    # Re-check
+    STILL_MISSING=$(ldd "$INSTALL_DIR/vms-server" 2>/dev/null | grep 'not found' || true)
+    if [ -n "$STILL_MISSING" ]; then
+        warn "Some libraries still missing — VMS Server may fail to start:"
+        echo "$STILL_MISSING" | while read -r line; do echo "    $line"; done
+    else
+        ok "All shared library dependencies resolved"
+    fi
+else
+    ok "All shared library dependencies satisfied"
 fi
 
 # ============================================================
@@ -397,6 +457,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+ExecStartPre=/bin/mkdir -p ${DATA_DIR} ${LOG_DIR} ${CONFIG_DIR} /var/www/html/streams
 ExecStart=${INSTALL_DIR}/vms-server
 Restart=always
 RestartSec=5
@@ -426,13 +487,23 @@ systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl start "$SERVICE_NAME"
 
-# Wait for server to start
-sleep 2
-if systemctl is-active --quiet "$SERVICE_NAME"; then
-    ok "VMS Server is running"
-else
-    warn "VMS Server may not have started yet. Check: journalctl -u $SERVICE_NAME -f"
-fi
+# Wait for server to start (with retry)
+MAX_WAIT=10
+for i in $(seq 1 $MAX_WAIT); do
+    sleep 1
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        ok "VMS Server is running"
+        break
+    fi
+    if [ "$i" -eq "$MAX_WAIT" ]; then
+        warn "VMS Server failed to start after ${MAX_WAIT}s"
+        warn "Check logs: journalctl -u $SERVICE_NAME --no-pager -n 20"
+        # Show actual error
+        journalctl -u "$SERVICE_NAME" --no-pager -n 5 2>/dev/null | while read -r line; do
+            echo "    $line"
+        done
+    fi
+done
 
 # ============================================================
 # Detect / Configure Domain
@@ -777,16 +848,24 @@ if command -v ufw &>/dev/null; then
     ufw allow 22/tcp   > /dev/null 2>&1 || true
     ufw allow 80/tcp   > /dev/null 2>&1 || true
     ufw allow 443/tcp  > /dev/null 2>&1 || true
-    # Port 8080 is NOT opened — VMS server should be accessed via nginx (443) only
-    # ufw allow 8080/tcp > /dev/null 2>&1 || true
-    ok "Firewall rules configured (22, 80, 443) — port 8080 kept internal"
+    if [ "${SKIP_NGINX}" = "1" ]; then
+        # No nginx — clients connect directly to VMS server ports
+        ufw allow 8080/tcp > /dev/null 2>&1 || true
+        ufw allow 8443/tcp > /dev/null 2>&1 || true
+        ok "Firewall rules configured (22, 80, 443, 8080, 8443)"
+    else
+        # Nginx handles SSL termination — port 8080/8443 kept internal
+        ok "Firewall rules configured (22, 80, 443) — port 8080 kept internal"
+    fi
 elif command -v firewall-cmd &>/dev/null; then
     firewall-cmd --permanent --add-service=http  > /dev/null 2>&1 || true
     firewall-cmd --permanent --add-service=https > /dev/null 2>&1 || true
-    # Port 8080 is NOT opened — VMS server should be accessed via nginx (443) only
-    # firewall-cmd --permanent --add-port=8080/tcp > /dev/null 2>&1 || true
+    if [ "${SKIP_NGINX}" = "1" ]; then
+        firewall-cmd --permanent --add-port=8080/tcp > /dev/null 2>&1 || true
+        firewall-cmd --permanent --add-port=8443/tcp > /dev/null 2>&1 || true
+    fi
     firewall-cmd --reload > /dev/null 2>&1 || true
-    ok "Firewall rules configured — port 8080 kept internal"
+    ok "Firewall rules configured"
 else
     info "No firewall manager detected — skipping"
 fi
