@@ -1,0 +1,19 @@
+# Default owners
+* @trinhtanphat
+
+# Security-critical release chain
+/install.sh @trinhtanphat @vms-security-team @vms-ops-team
+/install.ps1 @trinhtanphat @vms-security-team @vms-ops-team
+/SHA256SUMS @trinhtanphat @vms-security-team
+/SHA256SUMS.sig @trinhtanphat @vms-security-team
+/install.sh.sig @trinhtanphat @vms-security-team
+/install.ps1.sig @trinhtanphat @vms-security-team
+/signing/ @trinhtanphat @vms-security-team
+/scripts/generate-checksums.sh @trinhtanphat @vms-security-team
+/scripts/security-regression-check.sh @trinhtanphat @vms-security-team
+/scripts/security-regression-check.ps1 @trinhtanphat @vms-security-team
+/.github/workflows/release-signing.yml @trinhtanphat @vms-security-team
+/.github/workflows/release-docs.yml @trinhtanphat @vms-security-team
+/.github/workflows/security-gate.yml @trinhtanphat @vms-security-team
+/templates/ @trinhtanphat @vms-security-team
+/RELEASE_CHECKLIST.md @trinhtanphat @vms-security-team @vms-ops-team

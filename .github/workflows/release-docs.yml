@@ -1,0 +1,45 @@
+name: Release Docs Skeleton
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.2.3)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  generate-release-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ -n "${GITHUB_REF_NAME}" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="v0.0.0"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release docs skeleton
+        run: |
+          chmod +x scripts/init-release-docs.sh
+          ./scripts/init-release-docs.sh "${{ steps.ver.outputs.version }}" release-docs
+
+      - name: Upload release docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-docs-${{ steps.ver.outputs.version }}
+          path: release-docs/

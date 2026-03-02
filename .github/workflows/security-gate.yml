@@ -1,0 +1,88 @@
+name: Security Gate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.2.3)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  security-gate:
+    runs-on: ubuntu-latest
+    env:
+      VMS_SIGNING_KEY: /tmp/release-signing-private.pem
+      VMS_SIGNING_PUBKEY: signing/release-signing.pub.pem
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          elif [ -n "${GITHUB_REF_NAME}" ]; then
+            VERSION="${GITHUB_REF_NAME}"
+          else
+            VERSION="v0.0.0"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate signing secret
+        run: |
+          if [ -z "${{ secrets.RELEASE_SIGNING_PRIVATE_KEY_PEM }}" ]; then
+            echo "Missing secret: RELEASE_SIGNING_PRIVATE_KEY_PEM" >&2
+            exit 1
+          fi
+
+      - name: Write private key
+        run: |
+          cat > "$VMS_SIGNING_KEY" <<'KEYEOF'
+          ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY_PEM }}
+          KEYEOF
+          chmod 600 "$VMS_SIGNING_KEY"
+
+      - name: Generate checksums and signatures
+        run: |
+          chmod +x scripts/generate-checksums.sh
+          ./scripts/generate-checksums.sh . --sign
+
+      - name: Run security regression checks
+        run: |
+          chmod +x scripts/security-regression-check.sh
+          ./scripts/security-regression-check.sh .
+
+      - name: Generate release docs skeleton
+        run: |
+          chmod +x scripts/init-release-docs.sh
+          ./scripts/init-release-docs.sh "${{ steps.ver.outputs.version }}" release-docs
+
+      - name: Upload security artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-gate-${{ steps.ver.outputs.version }}
+          path: |
+            SHA256SUMS
+            SHA256SUMS.sig
+            install.sh.sig
+            install.ps1.sig
+            release-docs/
+
+      - name: Attach signatures to GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SHA256SUMS
+            SHA256SUMS.sig
+            install.sh.sig
+            install.ps1.sig
+          fail_on_unmatched_files: true

@@ -35,14 +35,59 @@ Each server is **self-contained**: VMS Server + optional nginx/SSL + Web Client.
 
 ### Linux
 
+Helper script (auto verify + install):
+
 ```bash
-curl -fsSL https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.sh | sudo bash
+cd vms-server-releases
+./scripts/bootstrap-install.sh latest
+```
+
+Manual secure bootstrap:
+
+```bash
+set -euo pipefail
+TMP_DIR=$(mktemp -d)
+cd "$TMP_DIR"
+
+BASE_URL="https://github.com/trinhtanphat/vms-server-releases/releases/latest/download"
+PUBKEY_URL="https://raw.githubusercontent.com/trinhtanphat/vms-server-releases/main/signing/release-signing.pub.pem"
+PINNED_PUBKEY_SHA256="46b5e96366ec3198de60f39d47130e7143d351ac9a20bce32fb767117579b6bc"
+
+curl -fsSLO "$BASE_URL/install.sh"
+curl -fsSLO "$BASE_URL/install.sh.sig"
+curl -fsSL "$PUBKEY_URL" -o release-signing.pub.pem
+
+echo "$PINNED_PUBKEY_SHA256  release-signing.pub.pem" | sha256sum -c -
+openssl dgst -sha256 -verify release-signing.pub.pem -signature install.sh.sig install.sh
+
+sudo bash ./install.sh
 ```
 
 ### Windows (PowerShell as Administrator)
 
+Helper script (auto verify + install):
+
 ```powershell
-irm https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.ps1 | iex
+cd vms-server-releases
+.\scripts\bootstrap-install.ps1 -Version latest
+```
+
+Manual secure bootstrap:
+
+```powershell
+$base = "https://github.com/trinhtanphat/vms-server-releases/releases/latest/download"
+$pub = "https://raw.githubusercontent.com/trinhtanphat/vms-server-releases/main/signing/release-signing.pub.pem"
+$pinned = "46b5e96366ec3198de60f39d47130e7143d351ac9a20bce32fb767117579b6bc"
+
+Invoke-WebRequest -Uri "$base/install.ps1" -OutFile install.ps1
+Invoke-WebRequest -Uri "$base/install.ps1.sig" -OutFile install.ps1.sig
+Invoke-WebRequest -Uri $pub -OutFile release-signing.pub.pem
+
+$actual = (Get-FileHash .\release-signing.pub.pem -Algorithm SHA256).Hash.ToLower()
+if ($actual -ne $pinned) { throw "Public key hash mismatch" }
+
+openssl dgst -sha256 -verify .\release-signing.pub.pem -signature .\install.ps1.sig .\install.ps1
+.\install.ps1
 ```
 
 Or download and run:
@@ -70,6 +115,17 @@ This will:
 | `SKIP_NGINX=1` | Skip nginx/SSL setup |
 | `SKIP_WEB_CLIENT=1` | Skip web client deployment |
 | `EMAIL=admin@example.com` | Let's Encrypt email |
+| `REQUIRE_CHECKSUMS=1` | Require SHA256 verification for release assets (default) |
+| `ALLOW_UNVERIFIED=1` | Allow install without checksums (emergency only) |
+| `REQUIRE_SIGNATURES=1` | Require detached signature verification for `SHA256SUMS` (default) |
+| `ALLOW_UNSIGNED=1` | Allow install when checksum signature is unavailable/invalid (emergency only) |
+| `REQUIRE_INSTALLER_SIGNATURE=1` | Require detached signature verification for `install.sh` (default) |
+| `ALLOW_INSECURE_BOOTSTRAP=1` | Allow installer from stdin/no signature (emergency only) |
+| `NX_INSECURE_TLS=1` | Disable TLS verification for NX upstream proxy (emergency only) |
+| `NX_TRUST_CHAIN_URL=<url>` | Download NX trust chain PEM for nginx upstream verification |
+| `NX_TRUST_CHAIN_PATH=<path>` | Use local NX trust chain PEM for nginx upstream verification |
+| `AUTO_ROLLBACK=1` | Auto-rollback upgrade on installer failure (default) |
+| `TRUSTED_SIGNING_PUBKEY_SHA256=<hash>` | Override pinned release signing public-key hash |
 
 ### Windows Install Options
 
@@ -79,6 +135,9 @@ This will:
 | `-InstallDir "D:\VMS"` | Custom install directory |
 | `-SkipService` | Skip Windows Service creation |
 | `-SkipFirewall` | Skip firewall rule creation |
+| `-RequireInstallerSignature:$false` | Disable `install.ps1` signature enforcement (emergency only) |
+| `-AllowInsecureBootstrap` | Allow execution without signature (stdin/missing `.sig`) |
+| `-TrustedSigningPubKeySha256 <hash>` | Override pinned release signing public-key hash |
 
 ### After Installation
 
@@ -162,6 +221,99 @@ irm https://github.com/trinhtanphat/vms-server-releases/releases/latest/download
 
 Detects existing installations and upgrades in place.
 
+## Uninstall (Linux)
+
+```bash
+cd vms-server-releases
+sudo ./uninstall.sh
+```
+
+Optional destructive flags:
+
+```bash
+sudo ./uninstall.sh --purge-data --purge-web --yes
+```
+
+## Release Integrity (Installer + SHA256 + Signature)
+
+Installer verifies release assets in two steps:
+1. Verify `install.sh` signature (`install.sh.sig`) with pinned release public key
+2. Verify `SHA256SUMS` signature (`SHA256SUMS.sig`) with pinned release public key
+3. Verify each release asset hash against `SHA256SUMS`
+
+Generate and sign manifest before publishing release:
+
+```bash
+cd vms-server-releases
+chmod +x scripts/generate-checksums.sh
+./scripts/generate-checksums.sh . --sign
+```
+
+Upload these release assets together with binaries/installers:
+- `SHA256SUMS`
+- `SHA256SUMS.sig`
+- `install.sh.sig`
+- `install.ps1.sig`
+
+Quick verify example:
+
+```bash
+sha256sum -c SHA256SUMS
+openssl dgst -sha256 -verify signing/release-signing.pub.pem -signature SHA256SUMS.sig SHA256SUMS
+openssl dgst -sha256 -verify signing/release-signing.pub.pem -signature install.sh.sig install.sh
+openssl dgst -sha256 -verify signing/release-signing.pub.pem -signature install.ps1.sig install.ps1
+```
+
+Automated release signing is available via GitHub Actions workflow:
+
+- `.github/workflows/release-signing.yml`
+- Required secret: `RELEASE_SIGNING_PRIVATE_KEY_PEM`
+
+Local security regression check:
+
+```bash
+cd vms-server-releases
+./scripts/security-regression-check.sh .
+```
+
+PowerShell regression check:
+
+```powershell
+.\scripts\security-regression-check.ps1 -Root .
+```
+
+Release operator checklist:
+
+- `RELEASE_CHECKLIST.md`
+
+Release governance templates:
+
+- `templates/RELEASE_NOTES_SECURITY_TEMPLATE.md`
+- `templates/SECURITY_BYPASS_INCIDENT_TEMPLATE.md`
+- `SECURITY_GOVERNANCE.md`
+- `BRANCH_PROTECTION_POLICY.md`
+- `CODEOWNERS`
+
+Initialize docs for a new release:
+
+```bash
+cd vms-server-releases
+./scripts/init-release-docs.sh vX.Y.Z release-docs
+```
+
+CI automation for release docs:
+
+- Workflow: `.github/workflows/release-docs.yml`
+- Trigger: tag push `v*` or manual `workflow_dispatch`
+- Output artifact: `release-docs-<version>`
+
+Unified release security gate:
+
+- Workflow: `.github/workflows/security-gate.yml`
+- Includes: signing, regression checks, release-doc skeleton generation
+- Output artifact: `security-gate-<version>`
+- Release tags should be considered valid only when this workflow is green
+
 ## GPU Support
 
 For AI analytics plugins, ensure:
@@ -195,27 +347,20 @@ The installer creates a hardened systemd unit with:
 
 ## Security Status
 
-> **Last audit:** 2026-02-09
+> **Last audit:** 2026-03-02
 
 ### Known Issues
 | Severity | Issue |
 |----------|-------|
-| 🔴 Critical | `curl \| sudo bash` — no checksum/GPG verification of script |
-| 🔴 Critical | Downloaded binaries (`tar.gz`) have no SHA256 verification |
-| 🟡 Medium | Service runs as `User=root` (despite hardening) |
-| 🟡 Medium | CORS wildcard `*` on some nginx proxy routes |
-| 🟡 Medium | `proxy_ssl_verify off` on NX Witness upstream |
-| 🟡 Medium | Command injection via unsanitized `$DOMAIN` |
+| 🟡 Medium | NX upstream may fail on self-signed cert unless proper trust chain is configured |
 | 🟢 Low | `apt-get` hardcoded — fails on RHEL/CentOS |
 | 🟢 Low | No log rotation, no backup before upgrade |
 | 🟢 Low | No uninstall script |
 
 ### Recommended
-1. Add SHA256 checksum verification for all downloads
-2. Create dedicated `vms` service user instead of root
-3. Validate `$DOMAIN` input with regex
-4. Add explicit CORS allowlist instead of wildcard
-5. Add uninstall script and upgrade backup
+1. Follow NX TLS trust playbook to keep `proxy_ssl_verify on` in production: `NX_TLS_TRUST_PLAYBOOK.md`
+2. Add uninstall script and upgrade backup/rollback flow
+3. Add package-manager abstraction for non-Debian Linux distributions
 
 ## Related Repositories
 

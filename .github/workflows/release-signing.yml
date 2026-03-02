@@ -1,0 +1,71 @@
+name: Release Signing
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sign-assets:
+    runs-on: ubuntu-latest
+    env:
+      VMS_SIGNING_KEY: /tmp/release-signing-private.pem
+      VMS_SIGNING_PUBKEY: signing/release-signing.pub.pem
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate signing secret
+        run: |
+          if [ -z "${{ secrets.RELEASE_SIGNING_PRIVATE_KEY_PEM }}" ]; then
+            echo "Missing secret: RELEASE_SIGNING_PRIVATE_KEY_PEM" >&2
+            exit 1
+          fi
+
+      - name: Write private key
+        run: |
+          cat > "$VMS_SIGNING_KEY" <<'KEYEOF'
+          ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY_PEM }}
+          KEYEOF
+          chmod 600 "$VMS_SIGNING_KEY"
+
+      - name: Generate checksums and signatures
+        run: |
+          chmod +x scripts/generate-checksums.sh
+          ./scripts/generate-checksums.sh . --sign
+
+      - name: Verify signature chain
+        run: |
+          openssl dgst -sha256 -verify "$VMS_SIGNING_PUBKEY" -signature install.sh.sig install.sh
+          openssl dgst -sha256 -verify "$VMS_SIGNING_PUBKEY" -signature install.ps1.sig install.ps1
+          openssl dgst -sha256 -verify "$VMS_SIGNING_PUBKEY" -signature SHA256SUMS.sig SHA256SUMS
+
+      - name: Security regression checks
+        run: |
+          chmod +x scripts/security-regression-check.sh
+          ./scripts/security-regression-check.sh .
+
+      - name: Upload signed files as artifacts
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-release-files
+          path: |
+            SHA256SUMS
+            SHA256SUMS.sig
+            install.sh.sig
+            install.ps1.sig
+
+      - name: Attach signatures to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SHA256SUMS
+            SHA256SUMS.sig
+            install.sh.sig
+            install.ps1.sig
+          fail_on_unmatched_files: true

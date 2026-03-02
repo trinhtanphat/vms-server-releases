@@ -2,23 +2,34 @@
 # VMS Server Installation Script for Windows
 # Run as Administrator in PowerShell:
 #
-#   irm https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.ps1 | iex
+#   1) Download install.ps1 + install.ps1.sig + release-signing.pub.pem
+#   2) Verify public key hash and script signature
+#   3) Run: .\install.ps1
 #
-# Or download and run:
+# Secure bootstrap example:
 #   Invoke-WebRequest -Uri https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.ps1 -OutFile install.ps1
+#   Invoke-WebRequest -Uri https://github.com/trinhtanphat/vms-server-releases/releases/latest/download/install.ps1.sig -OutFile install.ps1.sig
+#   Invoke-WebRequest -Uri https://raw.githubusercontent.com/trinhtanphat/vms-server-releases/main/signing/release-signing.pub.pem -OutFile release-signing.pub.pem
+#   certutil -hashfile .\release-signing.pub.pem SHA256
+#   openssl dgst -sha256 -verify .\release-signing.pub.pem -signature .\install.ps1.sig .\install.ps1
 #   .\install.ps1
 #
 # Options:
 #   .\install.ps1 -Version "v0.7.0"
 #   .\install.ps1 -InstallDir "D:\VMS-Server"
 #   .\install.ps1 -SkipService
+#   .\install.ps1 -RequireInstallerSignature:$false   (emergency only)
+#   .\install.ps1 -AllowInsecureBootstrap             (emergency only)
 #
 
 param(
     [string]$Version = "",
     [string]$InstallDir = "$env:ProgramFiles\VMS-Server",
     [switch]$SkipService,
-    [switch]$SkipFirewall
+    [switch]$SkipFirewall,
+    [bool]$RequireInstallerSignature = $true,
+    [switch]$AllowInsecureBootstrap,
+    [string]$TrustedSigningPubKeySha256 = "46b5e96366ec3198de60f39d47130e7143d351ac9a20bce32fb767117579b6bc"
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,6 +45,84 @@ $DataDir = "$env:ProgramData\VMS-Server\data"
 $LogDir = "$env:ProgramData\VMS-Server\logs"
 $PluginDir = "$env:ProgramData\VMS-Server\plugins"
 $StreamDir = "$env:ProgramData\VMS-Server\streams"
+
+function Verify-InstallerSignature {
+    $scriptPath = $MyInvocation.MyCommand.Path
+
+    if ([string]::IsNullOrWhiteSpace($scriptPath) -or -not (Test-Path $scriptPath)) {
+        if ($RequireInstallerSignature -and -not $AllowInsecureBootstrap.IsPresent) {
+            Write-Host "[ERR] Refusing to run unsigned installer from stdin/pipe." -ForegroundColor Red
+            Write-Host "      Use secure bootstrap: download install.ps1 + install.ps1.sig and verify before running." -ForegroundColor Yellow
+            Write-Host "      Set -AllowInsecureBootstrap only for emergency/non-production installs." -ForegroundColor Yellow
+            exit 1
+        }
+        Write-Host "[WARN] Installer running from stdin/pipe - signature check skipped" -ForegroundColor Yellow
+        return
+    }
+
+    $sigPath = "$scriptPath.sig"
+    if (-not (Test-Path $sigPath)) {
+        if ($RequireInstallerSignature -and -not $AllowInsecureBootstrap.IsPresent) {
+            Write-Host "[ERR] Missing installer signature file: $sigPath" -ForegroundColor Red
+            Write-Host "      Set -AllowInsecureBootstrap only for emergency/non-production installs." -ForegroundColor Yellow
+            exit 1
+        }
+        Write-Host "[WARN] install.ps1.sig not found - skipping signature verification" -ForegroundColor Yellow
+        return
+    }
+
+    $openssl = Get-Command openssl -ErrorAction SilentlyContinue
+    if (-not $openssl) {
+        if ($RequireInstallerSignature -and -not $AllowInsecureBootstrap.IsPresent) {
+            Write-Host "[ERR] openssl is required for installer signature verification" -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "[WARN] openssl not found - skipping signature verification" -ForegroundColor Yellow
+        return
+    }
+
+    $pubKeyTemp = Join-Path $env:TEMP "vms-release-signing-$([Guid]::NewGuid().ToString('N')).pem"
+    @"
+-----BEGIN PUBLIC KEY-----
+MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAx9byxHJX7faK9CbAtQ7S
+7Qf9uqKBcvr/6tMGPIC2hK9WnW7WLWC79vJT6XcAEI0G3ylRhvO14Ao8lsZW6R/l
+H6Hi1TZE9xcDTihXttkZv3ep4YfjnXlihzJsqi3pOdQ26yHj9d3hw4K2q9pqbvEO
+Kqc8bidijN8nuDpSM0Mj9X6A36GrwaaS1Aazqv5r34GcEP9004zrvGikQ3z0tkqx
+IIDSW+JaXDnalP3oXLSCLRIzP2BXiZjlo6UUBJ2zT7cxlmKtnroLRa+3WtCOVQZC
+ZH8GNyGZgErJVULAnnzSYWj89K5KrzFDjiDfY+Xm4gBXpd0t8bEFa5/X4XibELJQ
+70nXdvxjo45/hLVd2BLPnZjpWmOBR61vwqfMHKo72iubt3Di4hufN5Z65S9+Yhu/
+7cQoLzi4FXfL2BCfEZBsWGfXM4iSuCIout9wIKv+MDHUxYXHbxora/tC7fsnBhoj
+AVqrkUVrNpONOiM4BDStGatFrg/G5xnmNaOxCSdB5yGDAgMBAAE=
+-----END PUBLIC KEY-----
+"@ | Set-Content -Path $pubKeyTemp -Encoding ascii
+
+    $pubHash = (Get-FileHash -Path $pubKeyTemp -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($pubHash -ne $TrustedSigningPubKeySha256.ToLowerInvariant()) {
+        Remove-Item -Path $pubKeyTemp -Force -ErrorAction SilentlyContinue
+        Write-Host "[ERR] Trusted signing key hash mismatch" -ForegroundColor Red
+        Write-Host "      Expected: $TrustedSigningPubKeySha256" -ForegroundColor Yellow
+        Write-Host "      Actual:   $pubHash" -ForegroundColor Yellow
+        exit 1
+    }
+
+    $verifyOutput = & $openssl.Source dgst -sha256 -verify $pubKeyTemp -signature $sigPath $scriptPath 2>&1
+    $verifyCode = $LASTEXITCODE
+    Remove-Item -Path $pubKeyTemp -Force -ErrorAction SilentlyContinue
+
+    if ($verifyCode -ne 0) {
+        if ($RequireInstallerSignature -and -not $AllowInsecureBootstrap.IsPresent) {
+            Write-Host "[ERR] Installer signature verification failed" -ForegroundColor Red
+            if ($verifyOutput) { Write-Host "      $verifyOutput" -ForegroundColor Yellow }
+            exit 1
+        }
+        Write-Host "[WARN] Installer signature verification failed - continuing because -AllowInsecureBootstrap is set" -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host "[OK]  Installer signature verified" -ForegroundColor Green
+}
+
+Verify-InstallerSignature
 
 # ============================================================
 # Banner
