@@ -41,18 +41,15 @@ jobs:
           mkdir -p extract
           tar -xzf vms-server-linux-x64.tar.gz -C extract
           test -f extract/vms-server-linux-x64/vms-server
-          BIN_VERSION=$(strings extract/vms-server-linux-x64/vms-server | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
           EXPECTED="${{ steps.vars.outputs.num }}"
           echo "Expected tag version: $EXPECTED"
-          echo "Binary embedded version: ${BIN_VERSION:-<none>}"
-          if [ -z "$BIN_VERSION" ]; then
-            echo "Unable to detect version string in binary" >&2
+          if ! strings extract/vms-server-linux-x64/vms-server | grep -Fxq "$EXPECTED"; then
+            echo "Version mismatch: expected token '$EXPECTED' not found in binary strings" >&2
+            echo "Sample version-like tokens from binary:" >&2
+            strings extract/vms-server-linux-x64/vms-server | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | sort -u | head -20 >&2
             exit 1
           fi
-          if [ "$BIN_VERSION" != "$EXPECTED" ]; then
-            echo "Version mismatch: release tag=$EXPECTED, binary=$BIN_VERSION" >&2
-            exit 1
-          fi
+          echo "Binary contains expected version token: $EXPECTED"
 
       - name: Print asset checksum
         run: sha256sum vms-server-linux-x64.tar.gz
