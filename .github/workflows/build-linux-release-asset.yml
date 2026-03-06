@@ -1,0 +1,61 @@
+name: Build Linux Release Asset
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to build (e.g. v0.0.2)"
+        required: true
+        type: string
+      source_ref:
+        description: "Source ref in vms-server repo (defaults to version tag)"
+        required: false
+        type: string
+      upload_to_release:
+        description: "Upload/replace vms-server-linux-x64.tar.gz on the release"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux-asset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release repo
+        uses: actions/checkout@v4
+
+      - name: Prepare build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config libssl-dev libsqlite3-dev
+
+      - name: Build corrected Linux asset
+        run: |
+          chmod +x scripts/build-linux-release-asset.sh
+          VERSION="${{ inputs.version }}"
+          SOURCE_REF="${{ inputs.source_ref }}"
+          if [ -z "$SOURCE_REF" ]; then
+            SOURCE_REF="$VERSION"
+          fi
+          ./scripts/build-linux-release-asset.sh \
+            --version "$VERSION" \
+            --source-ref "$SOURCE_REF" \
+            --source-repo "https://github.com/trinhtanphat/vms-server.git"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release-asset-${{ inputs.version }}
+          path: |
+            vms-server-linux-x64.tar.gz
+            vms-server-linux-x64/vms-server
+
+      - name: Replace release asset
+        if: ${{ inputs.upload_to_release }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ inputs.version }}" vms-server-linux-x64.tar.gz --clobber

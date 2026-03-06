@@ -1,0 +1,58 @@
+name: Release Asset Version Check
+
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to verify (e.g. v0.0.2). Defaults to current release tag."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify-linux-asset-version:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Determine tag
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          elif [ -n "${{ github.event.release.tag_name }}" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+          else
+            echo "Cannot determine release tag" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "num=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux asset
+        run: |
+          TAG="${{ steps.vars.outputs.tag }}"
+          curl -fL "https://github.com/${{ github.repository }}/releases/download/${TAG}/vms-server-linux-x64.tar.gz" -o vms-server-linux-x64.tar.gz
+
+      - name: Verify runtime version matches tag
+        run: |
+          mkdir -p extract
+          tar -xzf vms-server-linux-x64.tar.gz -C extract
+          test -f extract/vms-server-linux-x64/vms-server
+          BIN_VERSION=$(strings extract/vms-server-linux-x64/vms-server | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          EXPECTED="${{ steps.vars.outputs.num }}"
+          echo "Expected tag version: $EXPECTED"
+          echo "Binary embedded version: ${BIN_VERSION:-<none>}"
+          if [ -z "$BIN_VERSION" ]; then
+            echo "Unable to detect version string in binary" >&2
+            exit 1
+          fi
+          if [ "$BIN_VERSION" != "$EXPECTED" ]; then
+            echo "Version mismatch: release tag=$EXPECTED, binary=$BIN_VERSION" >&2
+            exit 1
+          fi
+
+      - name: Print asset checksum
+        run: sha256sum vms-server-linux-x64.tar.gz
